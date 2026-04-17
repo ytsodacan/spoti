@@ -1,14 +1,13 @@
 import { findByName, findByProps } from "@vendetta/metro";
-import { React } from "@vendetta/metro/common";
+import { React, toast } from "@vendetta/metro/common";
 import { after } from "@vendetta/patcher";
-import { showToast } from "@vendetta/ui/toasts";
 import { TouchableOpacity, Image } from "react-native";
 
 // --- Discord Internal Metro Modules ---
 const { getActivities } = findByProps("getActivities");
 const UserStore = findByProps("getCurrentUser");
-const MessageActions = findByProps("sendMessage", "receiveMessage");
-const SelectedChannelStore = findByProps("getChannelId", "getVoiceChannelId");
+const MessageActions = findByProps("sendMessage");
+const SelectedChannelStore = findByProps("getChannelId");
 
 let patches = [];
 
@@ -45,7 +44,6 @@ function getCurrentLyric(lrc: string, progressMs: number) {
             const timeMs = (min * 60 + sec) * 1000;
             
             if (timeMs <= progressMs) {
-                // Ignore empty lines to prevent spamming blank messages
                 const text = match[3].trim();
                 if (text) currentLine = text;
             } else {
@@ -64,40 +62,39 @@ function stopLiveLyrics() {
     currentLrcData = null;
     lastSentLyric = "";
     activeTrack = "";
-    showToast("Live Lyrics stopped.");
 }
 
 // --- React Component for the Toggle Button ---
 const LyricsToggleBtn = () => {
-    // Local state to make the icon change color instantly
     const [active, setActive] = React.useState(isLive);
 
     const toggleLyrics = async () => {
         if (active) {
             setActive(false);
             stopLiveLyrics();
+            toast.show("Live Lyrics stopped.");
             return;
         }
 
-        const currentUser = UserStore.getCurrentUser();
-        if (!currentUser) return showToast("User not found");
+        const currentUser = UserStore?.getCurrentUser();
+        if (!currentUser) return toast.show("User not found");
 
         const activities = getActivities(currentUser.id);
         const spotify = activities?.find((a: any) => a.name === "Spotify" && a.type === 2);
         
-        if (!spotify) return showToast("No Spotify activity detected!");
+        if (!spotify) return toast.show("No Spotify activity detected!");
 
         const track = spotify.details;
         const artist = spotify.state;
         
-        showToast(`Starting live lyrics for ${track}...`);
+        toast.show(`Starting live lyrics for ${track}...`);
         setActive(true);
         isLive = true;
         activeTrack = track;
         
         const lyricsLrc = await fetchLyrics(track, artist);
         if (!lyricsLrc) {
-            showToast("No synced lyrics found for this song.");
+            toast.show("No synced lyrics found.");
             setActive(false);
             stopLiveLyrics();
             return;
@@ -105,12 +102,10 @@ const LyricsToggleBtn = () => {
         
         currentLrcData = lyricsLrc;
 
-        // Start the background loop (checks every 1 second)
         syncInterval = setInterval(() => {
             const currentActivities = getActivities(currentUser.id);
             const currentSpotify = currentActivities?.find((a: any) => a.name === "Spotify" && a.type === 2);
             
-            // Auto-stop if music stops or changes song
             if (!currentSpotify || currentSpotify.details !== activeTrack) {
                 setActive(false);
                 stopLiveLyrics();
@@ -123,7 +118,6 @@ const LyricsToggleBtn = () => {
             const progressMs = Date.now() - start;
             const currentLine = getCurrentLyric(currentLrcData!, progressMs);
             
-            // If the line has changed, send it to chat!
             if (currentLine && currentLine !== lastSentLyric) {
                 lastSentLyric = currentLine;
                 const channelId = SelectedChannelStore.getChannelId();
@@ -139,13 +133,12 @@ const LyricsToggleBtn = () => {
     return (
         <TouchableOpacity 
             key="spotify-lyrics-btn"
-            style={{ marginHorizontal: 8, justifyContent: 'center' }}
+            style={{ marginHorizontal: 12, justifyContent: 'center' }}
             onPress={toggleLyrics}
         >
             <Image 
-                source={{uri: "https://upload.wikimedia.org/wikipedia/commons/1/19/Spotify_logo_without_text.svg"}} 
-                // Green when active, standard Discord gray when inactive
-                style={{width: 22, height: 22, tintColor: active ? "#1DB954" : "#B5BAC1"}} 
+                source={{ uri: "https://upload.wikimedia.org/wikipedia/commons/1/19/Spotify_logo_without_text.svg" }} 
+                style={{ width: 22, height: 22, tintColor: active ? "#1DB954" : "#B5BAC1" }} 
             />
         </TouchableOpacity>
     );
@@ -153,28 +146,34 @@ const LyricsToggleBtn = () => {
 
 export default {
     onLoad: () => {
-        // --- UI Injection ---
-        const Header = findByName("Header", false) || findByName("ChannelTitle", false);
-        
-        if (Header) {
+        try {
+            // Find the header component (Discord uses multiple names depending on version)
+            const Header = findByName("Header", false) || findByName("ChannelTitle", false);
+            
+            if (!Header) {
+                console.error("[Spotify] Header component not found.");
+                return;
+            }
+            
             patches.push(after("default", Header, (args, res) => {
-                const rightControls = res?.props?.right || res?.props?.children;
-                
+                // Navigate the React tree to find the right-side buttons
+                const rightControls = res?.props?.children?.props?.right || res?.props?.right || res?.props?.children;
+
                 if (Array.isArray(rightControls)) {
-                    // Check if our button is already there to prevent duplicates on re-renders
                     const hasBtn = rightControls.some((child: any) => child?.key === "spotify-lyrics-btn");
                     if (!hasBtn) {
                         rightControls.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
                     }
                 }
             }));
+        } catch (err) {
+            console.error("[Spotify] Plugin failed to load:", err);
         }
     },
     onUnload: () => {
-        // Cleanup UI and intervals on plugin disable
         stopLiveLyrics();
         for (const unpatch of patches) {
             unpatch();
         }
     }
-}
+};
