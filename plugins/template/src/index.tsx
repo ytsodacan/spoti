@@ -1,25 +1,25 @@
 import { findByName, findByProps } from "@vendetta/metro";
-import { React, ReactNative, toast } from "@vendetta/metro/common";
+import { React, ReactNative } from "@vendetta/metro/common";
 import { after } from "@vendetta/patcher";
+import { showToast } from "@vendetta/ui/toasts";
 
 const { TouchableOpacity, Image } = ReactNative;
 
 // --- Discord Internal Metro Modules ---
-const { getActivities } = findByProps("getActivities");
+const { getActivities } = findByProps("getActivities") || {};
 const UserStore = findByProps("getCurrentUser");
 const MessageActions = findByProps("sendMessage");
 const SelectedChannelStore = findByProps("getChannelId");
 
 let patches: (() => void)[] = [];
 
-// --- Global State for the Background Loop ---
+// --- Global State ---
 let isLive = false;
 let syncInterval: any = null;
 let currentLrcData: string | null = null;
 let lastSentLyric = "";
 let activeTrack = "";
 
-// --- Lyrics API Integration ---
 async function fetchLyrics(track: string, artist: string) {
     try {
         const res = await fetch(`https://lrclib.net/api/get?track_name=${encodeURIComponent(track)}&artist_name=${encodeURIComponent(artist)}`);
@@ -31,49 +31,25 @@ async function fetchLyrics(track: string, artist: string) {
     }
 }
 
-// Helper function to safely dig through Discord's nested React structures
-function findRightControls(res: any): any {
-    if (!res) return null;
-    if (res?.props?.right) return res.props.right;
-    if (res?.props?.children?.props?.right) return res.props.children.props.right;
-    
-    // Sometimes it's buried in an array of children
-    if (Array.isArray(res?.props?.children)) {
-        for (const child of res.props.children) {
-            if (child?.props?.right) return child.props.right;
-        }
-    }
-    return null;
-}
-
-
-
-
-// --- LRC Parsing Logic ---
 function getCurrentLyric(lrc: string, progressMs: number) {
     if (!lrc) return null;
     const lines = lrc.split('\n');
     let currentLine = null;
-    
     for (const line of lines) {
         const match = line.match(/\[(\d+):(\d+\.\d+)\](.*)/);
         if (match) {
             const min = parseInt(match[1]);
             const sec = parseFloat(match[2]);
             const timeMs = (min * 60 + sec) * 1000;
-            
             if (timeMs <= progressMs) {
                 const text = match[3].trim();
                 if (text) currentLine = text;
-            } else {
-                break;
-            }
+            } else { break; }
         }
     }
     return currentLine;
 }
 
-// --- Stop Function ---
 function stopLiveLyrics() {
     isLive = false;
     if (syncInterval) clearInterval(syncInterval);
@@ -83,7 +59,6 @@ function stopLiveLyrics() {
     activeTrack = "";
 }
 
-// --- React Component for the Toggle Button ---
 const LyricsToggleBtn = () => {
     const [active, setActive] = React.useState(isLive);
 
@@ -91,29 +66,29 @@ const LyricsToggleBtn = () => {
         if (active) {
             setActive(false);
             stopLiveLyrics();
-            toast.show("Live Lyrics stopped.");
+            showToast("Live Lyrics stopped.");
             return;
         }
 
         const currentUser = UserStore?.getCurrentUser();
-        if (!currentUser) return toast.show("User not found");
+        if (!currentUser) return showToast("User not found");
 
-        const activities = getActivities(currentUser.id);
+        const activities = getActivities?.(currentUser.id);
         const spotify = activities?.find((a: any) => a.name === "Spotify" && a.type === 2);
         
-        if (!spotify) return toast.show("No Spotify activity detected!");
+        if (!spotify) return showToast("No Spotify activity detected!");
 
         const track = spotify.details;
         const artist = spotify.state;
         
-        toast.show(`Starting live lyrics for ${track}...`);
+        showToast(`Starting lyrics for ${track}...`);
         setActive(true);
         isLive = true;
         activeTrack = track;
         
         const lyricsLrc = await fetchLyrics(track, artist);
         if (!lyricsLrc) {
-            toast.show("No synced lyrics found.");
+            showToast("No synced lyrics found.");
             setActive(false);
             stopLiveLyrics();
             return;
@@ -122,7 +97,7 @@ const LyricsToggleBtn = () => {
         currentLrcData = lyricsLrc;
 
         syncInterval = setInterval(() => {
-            const currentActivities = getActivities(currentUser.id);
+            const currentActivities = getActivities?.(currentUser.id);
             const currentSpotify = currentActivities?.find((a: any) => a.name === "Spotify" && a.type === 2);
             
             if (!currentSpotify || currentSpotify.details !== activeTrack) {
@@ -139,11 +114,9 @@ const LyricsToggleBtn = () => {
             
             if (currentLine && currentLine !== lastSentLyric) {
                 lastSentLyric = currentLine;
-                const channelId = SelectedChannelStore.getChannelId();
+                const channelId = SelectedChannelStore?.getChannelId();
                 if (channelId) {
-                    MessageActions.sendMessage(channelId, {
-                        content: `🎤 *${currentLine}*`
-                    });
+                    MessageActions.sendMessage(channelId, { content: `🎤 *${currentLine}*` });
                 }
             }
         }, 1000);
@@ -166,60 +139,38 @@ const LyricsToggleBtn = () => {
 export default {
     onLoad: () => {
         try {
-            toast.show("[1] Spotify Loaded");
-
-            // Strategy A: Find the standard React Navigation Header module
-            const NavHeader = findByProps("Header", "Left", "Right");
+            // Updated list of possible Header component names
+            const Header = findByName("Header", false) 
+                        || findByName("ChannelHeader", false) 
+                        || findByName("ChannelTitle", false);
             
-            // Strategy B: Fallback to standalone Channel components
-            const HeaderModule = findByName("Header", false) || findByName("ChannelTitle", false);
+            if (!Header) return console.error("[Spotify] Header not found.");
+            
+            // Patch the component. We check both 'default' and the object itself.
+            const patchTarget = Header.default ? Header : { default: Header };
 
-            if (!NavHeader && !HeaderModule) {
-                toast.show("[X] Error: Could not find any header modules.");
-                return;
-            }
+            patches.push(after("default", patchTarget, (args, res) => {
+                if (!res) return;
 
-            toast.show("[2] Target Found");
+                // Dig through common Discord UI paths to find where the icons live
+                const topBar = res?.props?.children?.props?.right 
+                            || res?.props?.right 
+                            || res?.props?.children?.props?.children?.props?.right;
 
-            // Patch Strategy A (React Navigation Header)
-            if (NavHeader && NavHeader.Header) {
-                patches.push(after("Header", NavHeader, (args, res) => {
-                    const rightControls = findRightControls(res);
-                    if (Array.isArray(rightControls)) {
-                        if (!rightControls.some((c: any) => c?.key === "spotify-lyrics-btn")) {
-                            rightControls.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
-                        }
+                if (Array.isArray(topBar)) {
+                    if (!topBar.some((c: any) => c?.key === "spotify-lyrics-btn")) {
+                        topBar.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
                     }
-                }));
-            }
-
-            // Patch Strategy B (Standard Discord Header)
-            if (HeaderModule) {
-                // Check if it's a module with a 'default' export, or just the function itself
-                const targetObj = HeaderModule.default ? HeaderModule : null;
-                const patchTarget = HeaderModule.default ? "default" : null;
-
-                if (targetObj && patchTarget) {
-                    patches.push(after(patchTarget, targetObj, (args, res) => {
-                        const rightControls = findRightControls(res);
-                        if (Array.isArray(rightControls)) {
-                            if (!rightControls.some((c: any) => c?.key === "spotify-lyrics-btn")) {
-                                rightControls.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
-                            }
-                        }
-                    }));
                 }
-            }
+            }));
 
+            showToast("Spotify Lyrics Loaded!");
         } catch (err) {
-            toast.show(`[X] Load Error: ${err.message}`);
             console.error("[Spotify] Load Error:", err);
         }
     },
     onUnload: () => {
         stopLiveLyrics();
-        for (const unpatch of patches) {
-            unpatch();
-        }
+        patches.forEach(unpatch => unpatch());
     }
 };
