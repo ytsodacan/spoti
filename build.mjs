@@ -57,6 +57,25 @@ for (let plug of await readdir("./plugins")) {
             input: `./plugins/${plug}/${manifest.main}`,
             onwarn: () => {},
             plugins,
+            
+    
+    external: [
+        "react",
+        "react-native",
+        "@vendetta/metro",
+        "@vendetta/ui",
+        "@vendetta/patcher",
+        "@vendetta/debug",
+        "@vendetta/utils",
+        "@vendetta/storage",
+        "@vendetta/settings",
+        "@vendetta/commands",
+        "@vendetta/assets",
+        "@vendetta/plugins",
+        "@vendetta/toasts",
+        "@vendetta/constants"
+    ],
+
         });
     
         await bundle.write({
