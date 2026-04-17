@@ -31,6 +31,24 @@ async function fetchLyrics(track: string, artist: string) {
     }
 }
 
+// Helper function to safely dig through Discord's nested React structures
+function findRightControls(res: any): any {
+    if (!res) return null;
+    if (res?.props?.right) return res.props.right;
+    if (res?.props?.children?.props?.right) return res.props.children.props.right;
+    
+    // Sometimes it's buried in an array of children
+    if (Array.isArray(res?.props?.children)) {
+        for (const child of res.props.children) {
+            if (child?.props?.right) return child.props.right;
+        }
+    }
+    return null;
+}
+
+
+
+
 // --- LRC Parsing Logic ---
 function getCurrentLyric(lrc: string, progressMs: number) {
     if (!lrc) return null;
@@ -148,38 +166,54 @@ const LyricsToggleBtn = () => {
 export default {
     onLoad: () => {
         try {
-            // Find the header component (Discord uses multiple names depending on version)
-            const Header = 
-                findByName("Header", false) || 
-                findByName("ChannelHeader", false) || 
-                findByName("ChannelTitle", false) ||
-                findByName("HeaderContainer", false);
+            toast.show("[1] Spotify Loaded");
+
+            // Strategy A: Find the standard React Navigation Header module
+            const NavHeader = findByProps("Header", "Left", "Right");
             
-            if (!Header) {
-                console.error("[Spotify] Header component not found.");
+            // Strategy B: Fallback to standalone Channel components
+            const HeaderModule = findByName("Header", false) || findByName("ChannelTitle", false);
+
+            if (!NavHeader && !HeaderModule) {
+                toast.show("[X] Error: Could not find any header modules.");
                 return;
             }
-            
-            patches.push(after("default", Header, (args, res) => {
-                // Navigate the React tree to find the right-side buttons
-                let target = res?.props?.children?.props?.right 
-                           || res?.props?.right 
-                           || res?.props?.children;
 
-                // Sometimes the header is wrapped, we need to dig one layer deeper
-                if (!target && res?.props?.children?.props?.children) {
-                    target = res?.props?.children?.props?.children?.props?.right;
-                }
+            toast.show("[2] Target Found");
 
-                if (Array.isArray(target)) {
-                    const hasBtn = target.some((child: any) => child?.key === "spotify-lyrics-btn");
-                    if (!hasBtn) {
-                        target.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
+            // Patch Strategy A (React Navigation Header)
+            if (NavHeader && NavHeader.Header) {
+                patches.push(after("Header", NavHeader, (args, res) => {
+                    const rightControls = findRightControls(res);
+                    if (Array.isArray(rightControls)) {
+                        if (!rightControls.some((c: any) => c?.key === "spotify-lyrics-btn")) {
+                            rightControls.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
+                        }
                     }
+                }));
+            }
+
+            // Patch Strategy B (Standard Discord Header)
+            if (HeaderModule) {
+                // Check if it's a module with a 'default' export, or just the function itself
+                const targetObj = HeaderModule.default ? HeaderModule : null;
+                const patchTarget = HeaderModule.default ? "default" : null;
+
+                if (targetObj && patchTarget) {
+                    patches.push(after(patchTarget, targetObj, (args, res) => {
+                        const rightControls = findRightControls(res);
+                        if (Array.isArray(rightControls)) {
+                            if (!rightControls.some((c: any) => c?.key === "spotify-lyrics-btn")) {
+                                rightControls.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
+                            }
+                        }
+                    }));
                 }
-            }));
+            }
+
         } catch (err) {
-            console.error("[Spotify] Plugin failed to load:", err);
+            toast.show(`[X] Load Error: ${err.message}`);
+            console.error("[Spotify] Load Error:", err);
         }
     },
     onUnload: () => {
