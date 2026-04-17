@@ -3,7 +3,7 @@ import { React, ReactNative } from "@vendetta/metro/common";
 import { after } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
 
-const { TouchableOpacity, Image } = ReactNative;
+const { TouchableOpacity, Image, View } = ReactNative;
 
 // --- Discord Internal Metro Modules ---
 const { getActivities } = findByProps("getActivities") || {};
@@ -66,7 +66,7 @@ const LyricsToggleBtn = () => {
         if (active) {
             setActive(false);
             stopLiveLyrics();
-            showToast("Live Lyrics stopped.");
+            showToast("Lyrics sync stopped.");
             return;
         }
 
@@ -81,7 +81,7 @@ const LyricsToggleBtn = () => {
         const track = spotify.details;
         const artist = spotify.state;
         
-        showToast(`Starting lyrics for ${track}...`);
+        showToast(`Syncing: ${track}...`);
         setActive(true);
         isLive = true;
         activeTrack = track;
@@ -124,13 +124,12 @@ const LyricsToggleBtn = () => {
 
     return (
         <TouchableOpacity 
-            key="spotify-lyrics-btn"
-            style={{ marginHorizontal: 12, justifyContent: 'center' }}
+            style={{ paddingHorizontal: 8, justifyContent: 'center', alignItems: 'center' }}
             onPress={toggleLyrics}
         >
             <Image 
                 source={{ uri: "https://upload.wikimedia.org/wikipedia/commons/1/19/Spotify_logo_without_text.svg" }} 
-                style={{ width: 22, height: 22, tintColor: active ? "#1DB954" : "#B5BAC1" }} 
+                style={{ width: 20, height: 20, tintColor: active ? "#1DB954" : "#B5BAC1" }} 
             />
         </TouchableOpacity>
     );
@@ -139,32 +138,37 @@ const LyricsToggleBtn = () => {
 export default {
     onLoad: () => {
         try {
-            // Updated list of possible Header component names
-            const Header = findByName("Header", false) 
-                        || findByName("ChannelHeader", false) 
-                        || findByName("ChannelTitle", false);
+            // Find the Chat Input component
+            const ChatInput = findByName("ChatInput", false);
             
-            if (!Header) return console.error("[Spotify] Header not found.");
-            
-            // Patch the component. We check both 'default' and the object itself.
-            const patchTarget = Header.default ? Header : { default: Header };
+            if (!ChatInput) return console.error("[Spotify] ChatInput not found.");
 
-            patches.push(after("default", patchTarget, (args, res) => {
-                if (!res) return;
+            patches.push(after("render", ChatInput.prototype, (args, res) => {
+                // Find the buttons container (usually holds Emoji, GIF, Gift)
+                const buttons = res?.props?.children?.props?.children;
+                
+                if (Array.isArray(buttons)) {
+                    // Look for the Nitro/Gift button index
+                    // Discord usually identifies it via key or type
+                    const giftIndex = buttons.findIndex((c: any) => 
+                        c?.key === "gift" || 
+                        c?.props?.type === "gift" || 
+                        c?.type?.name === "GiftButton"
+                    );
 
-                // Dig through common Discord UI paths to find where the icons live
-                const topBar = res?.props?.children?.props?.right 
-                            || res?.props?.right 
-                            || res?.props?.children?.props?.children?.props?.right;
-
-                if (Array.isArray(topBar)) {
-                    if (!topBar.some((c: any) => c?.key === "spotify-lyrics-btn")) {
-                        topBar.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
+                    if (giftIndex !== -1) {
+                        // Replace the Gift button with our Toggle
+                        buttons[giftIndex] = <LyricsToggleBtn key="spotify-lyrics-btn" />;
+                    } else {
+                        // If no gift button found, just add it to the end of the button row
+                        if (!buttons.some((c: any) => c?.key === "spotify-lyrics-btn")) {
+                            buttons.push(<LyricsToggleBtn key="spotify-lyrics-btn" />);
+                        }
                     }
                 }
             }));
 
-            showToast("Spotify Lyrics Loaded!");
+            showToast("Spotify Lyrics Ready!");
         } catch (err) {
             console.error("[Spotify] Load Error:", err);
         }
