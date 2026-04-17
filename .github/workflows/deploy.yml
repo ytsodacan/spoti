@@ -3,7 +3,7 @@ name: Build and Deploy Plugin
 on:
   push:
     branches:
-      - main  # Runs every time you push to main
+      - master  # Make sure your default branch is actually named 'main'
 
 permissions:
   contents: write
@@ -17,9 +17,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/checkout@v4
+        uses: actions/setup-node@v4 # Fixed typo here
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install pnpm
         run: npm install -g pnpm
@@ -33,5 +33,5 @@ jobs:
       - name: Deploy to GitHub Pages 🚀
         uses: JamesIves/github-pages-deploy-action@v4
         with:
-          folder: dist    # This is where your index.js and manifest.json are
-          branch: gh-pages # This branch will host the final plugin
+          folder: dist
+          branch: gh-pages
