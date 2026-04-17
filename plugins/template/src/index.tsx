@@ -1,7 +1,7 @@
 import { findByName, findByProps } from "@vendetta/metro";
 import { React, toast } from "@vendetta/metro/common";
 import { after } from "@vendetta/patcher";
-import { TouchableOpacity, Image } from "react-native";
+const { TouchableOpacity, Image } = ReactNative;
 
 // --- Discord Internal Metro Modules ---
 const { getActivities } = findByProps("getActivities");
