@@ -3,7 +3,7 @@ import { React, ReactNative } from "@vendetta/metro/common";
 import { after } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
 
-const { TouchableOpacity, Image, View } = ReactNative;
+const { TouchableOpacity, Image } = ReactNative;
 
 // --- Discord Internal Metro Modules ---
 const { getActivities } = findByProps("getActivities") || {};
@@ -66,7 +66,7 @@ const LyricsToggleBtn = () => {
         if (active) {
             setActive(false);
             stopLiveLyrics();
-            showToast("Lyrics sync stopped.");
+            showToast("Lyrics stopped.");
             return;
         }
 
@@ -124,12 +124,12 @@ const LyricsToggleBtn = () => {
 
     return (
         <TouchableOpacity 
-            style={{ paddingHorizontal: 8, justifyContent: 'center', alignItems: 'center' }}
+            style={{ paddingHorizontal: 10, justifyContent: 'center', alignItems: 'center' }}
             onPress={toggleLyrics}
         >
             <Image 
                 source={{ uri: "https://upload.wikimedia.org/wikipedia/commons/1/19/Spotify_logo_without_text.svg" }} 
-                style={{ width: 20, height: 20, tintColor: active ? "#1DB954" : "#B5BAC1" }} 
+                style={{ width: 22, height: 22, tintColor: active ? "#1DB954" : "#B5BAC1" }} 
             />
         </TouchableOpacity>
     );
@@ -138,32 +138,48 @@ const LyricsToggleBtn = () => {
 export default {
     onLoad: () => {
         try {
-            // Find the Chat Input component
-            const ChatInput = findByName("ChatInput", false);
+            // Strategy: Find the Chat Input component by property or name
+            // This covers almost all versions of Discord/Kettu
+            const ChatInput = findByProps("renderChatInput") 
+                           || findByProps("ChatInput") 
+                           || findByName("ChatInput", false)
+                           || findByName("MessageInput", false);
             
-            if (!ChatInput) return console.error("[Spotify] ChatInput not found.");
+            if (!ChatInput) {
+                showToast("Chat bar not found - incompatible version.");
+                return;
+            }
 
-            patches.push(after("render", ChatInput.prototype, (args, res) => {
-                // Find the buttons container (usually holds Emoji, GIF, Gift)
-                const buttons = res?.props?.children?.props?.children;
-                
+            // Determine if we need to patch the default export or the object itself
+            const target = ChatInput.default || ChatInput;
+            const methodName = ChatInput.default ? "default" : "render";
+
+            patches.push(after(methodName, target, (args, res) => {
+                // Find the buttons row (where Emoji, GIF, and Gift live)
+                // We recursively look for the array containing the 'gift' key
+                const findButtons = (node: any): any => {
+                    if (!node) return null;
+                    if (Array.isArray(node)) return node;
+                    if (node.props?.children) return findButtons(node.props.children);
+                    return null;
+                };
+
+                const buttons = findButtons(res);
+
                 if (Array.isArray(buttons)) {
-                    // Look for the Nitro/Gift button index
-                    // Discord usually identifies it via key or type
+                    // Find index of the Gift button
                     const giftIndex = buttons.findIndex((c: any) => 
                         c?.key === "gift" || 
-                        c?.props?.type === "gift" || 
-                        c?.type?.name === "GiftButton"
+                        c?.props?.type === "gift" ||
+                        (c?.type?.name && c.type.name.includes("Gift"))
                     );
 
                     if (giftIndex !== -1) {
-                        // Replace the Gift button with our Toggle
+                        // SWAP: Put Spotify where the Gift button was
                         buttons[giftIndex] = <LyricsToggleBtn key="spotify-lyrics-btn" />;
-                    } else {
-                        // If no gift button found, just add it to the end of the button row
-                        if (!buttons.some((c: any) => c?.key === "spotify-lyrics-btn")) {
-                            buttons.push(<LyricsToggleBtn key="spotify-lyrics-btn" />);
-                        }
+                    } else if (!buttons.some((c: any) => c?.key === "spotify-lyrics-btn")) {
+                        // FALLBACK: If Gift isn't found, just add it to the row
+                        buttons.push(<LyricsToggleBtn key="spotify-lyrics-btn" />);
                     }
                 }
             }));
@@ -171,6 +187,7 @@ export default {
             showToast("Spotify Lyrics Ready!");
         } catch (err) {
             console.error("[Spotify] Load Error:", err);
+            showToast("Plugin error during UI patch.");
         }
     },
     onUnload: () => {
