@@ -1,10 +1,10 @@
 {
-    "name": "Template Plugin",
+    "name": "spotiy",
     "description": "A plugin for use as a template.",
     "authors": [
         {
             "name": "You!",
-            "id": "YOUR_ID_HERE"
+            "id": "coolspotimod"
         }
     ],
     "main": "src/index.ts",
