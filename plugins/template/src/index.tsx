@@ -1,6 +1,7 @@
 import { findByName, findByProps } from "@vendetta/metro";
-import { React, toast } from "@vendetta/metro/common";
+import { React, ReactNative, toast } from "@vendetta/metro/common";
 import { after } from "@vendetta/patcher";
+
 const { TouchableOpacity, Image } = ReactNative;
 
 // --- Discord Internal Metro Modules ---
@@ -9,7 +10,7 @@ const UserStore = findByProps("getCurrentUser");
 const MessageActions = findByProps("sendMessage");
 const SelectedChannelStore = findByProps("getChannelId");
 
-let patches = [];
+let patches: (() => void)[] = [];
 
 // --- Global State for the Background Loop ---
 let isLive = false;
@@ -148,7 +149,11 @@ export default {
     onLoad: () => {
         try {
             // Find the header component (Discord uses multiple names depending on version)
-            const Header = findByName("Header", false) || findByName("ChannelTitle", false);
+            const Header = 
+                findByName("Header", false) || 
+                findByName("ChannelHeader", false) || 
+                findByName("ChannelTitle", false) ||
+                findByName("HeaderContainer", false);
             
             if (!Header) {
                 console.error("[Spotify] Header component not found.");
@@ -157,12 +162,19 @@ export default {
             
             patches.push(after("default", Header, (args, res) => {
                 // Navigate the React tree to find the right-side buttons
-                const rightControls = res?.props?.children?.props?.right || res?.props?.right || res?.props?.children;
+                let target = res?.props?.children?.props?.right 
+                           || res?.props?.right 
+                           || res?.props?.children;
 
-                if (Array.isArray(rightControls)) {
-                    const hasBtn = rightControls.some((child: any) => child?.key === "spotify-lyrics-btn");
+                // Sometimes the header is wrapped, we need to dig one layer deeper
+                if (!target && res?.props?.children?.props?.children) {
+                    target = res?.props?.children?.props?.children?.props?.right;
+                }
+
+                if (Array.isArray(target)) {
+                    const hasBtn = target.some((child: any) => child?.key === "spotify-lyrics-btn");
                     if (!hasBtn) {
-                        rightControls.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
+                        target.unshift(<LyricsToggleBtn key="spotify-lyrics-btn" />);
                     }
                 }
             }));
